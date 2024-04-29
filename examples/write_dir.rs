@@ -1,50 +1,38 @@
-use std::io::prelude::*;
+use std::fs::File;
 use std::io::{Seek, Write};
 use std::iter::Iterator;
+use std::path::Path;
+use std::process::ExitCode;
+use walkdir::{DirEntry, WalkDir};
 use zip::result::ZipError;
 use zip::write::FileOptions;
 
-use std::fs::File;
-use std::path::Path;
-use walkdir::{DirEntry, WalkDir};
+const METHOD_STORED: Option<zip::CompressionMethod> = Some(zip::CompressionMethod::STORE);
 
-fn main() {
-    std::process::exit(real_main());
-}
+#[cfg(feature = "deflate-any")]
+const METHOD_DEFLATED: Option<zip::CompressionMethod> = Some(zip::CompressionMethod::DEFLATE);
 
-const METHOD_STORED: Option<zip::CompressionMethod> = Some(zip::CompressionMethod::Stored);
-
-#[cfg(any(
-    feature = "deflate",
-    feature = "deflate-miniz",
-    feature = "deflate-zlib"
-))]
-const METHOD_DEFLATED: Option<zip::CompressionMethod> = Some(zip::CompressionMethod::Deflated);
-#[cfg(not(any(
-    feature = "deflate",
-    feature = "deflate-miniz",
-    feature = "deflate-zlib"
-)))]
+#[cfg(not(feature = "deflate-any"))]
 const METHOD_DEFLATED: Option<zip::CompressionMethod> = None;
 
 #[cfg(feature = "bzip2")]
-const METHOD_BZIP2: Option<zip::CompressionMethod> = Some(zip::CompressionMethod::Bzip2);
+const METHOD_BZIP2: Option<zip::CompressionMethod> = Some(zip::CompressionMethod::BZIP2);
 #[cfg(not(feature = "bzip2"))]
 const METHOD_BZIP2: Option<zip::CompressionMethod> = None;
 
 #[cfg(feature = "zstd")]
-const METHOD_ZSTD: Option<zip::CompressionMethod> = Some(zip::CompressionMethod::Zstd);
+const METHOD_ZSTD: Option<zip::CompressionMethod> = Some(zip::CompressionMethod::ZSTD);
 #[cfg(not(feature = "zstd"))]
 const METHOD_ZSTD: Option<zip::CompressionMethod> = None;
 
-fn real_main() -> i32 {
+fn main() -> ExitCode {
     let args: Vec<_> = std::env::args().collect();
     if args.len() < 3 {
         println!(
             "Usage: {} <source_directory> <destination_zipfile>",
             args[0]
         );
-        return 1;
+        return ExitCode::FAILURE;
     }
 
     let src_dir = &*args[1];
@@ -59,24 +47,25 @@ fn real_main() -> i32 {
         }
     }
 
-    0
+    ExitCode::SUCCESS
 }
 
 fn zip_dir<T>(
     it: &mut dyn Iterator<Item = DirEntry>,
     prefix: &str,
     writer: T,
-    method: zip::CompressionMethod,
+    compression_method: zip::CompressionMethod,
 ) -> zip::result::ZipResult<()>
 where
     T: Write + Seek,
 {
     let mut zip = zip::ZipWriter::new(writer);
-    let options = FileOptions::default()
-        .compression_method(method)
-        .unix_permissions(0o755);
+    let options = FileOptions {
+        compression_method,
+        permissions: Some(0o755),
+        ..Default::default()
+    };
 
-    let mut buffer = Vec::new();
     for entry in it {
         let path = entry.path();
         let name = path.strip_prefix(Path::new(prefix)).unwrap();
@@ -86,12 +75,11 @@ where
         if path.is_file() {
             println!("adding file {path:?} as {name:?} ...");
             #[allow(deprecated)]
-            zip.start_file_from_path(name, options)?;
-            let mut f = File::open(path)?;
+            let mut file_writer = zip.start_file_from_path(name, options)?;
 
-            f.read_to_end(&mut buffer)?;
-            zip.write_all(&buffer)?;
-            buffer.clear();
+            let mut file = File::open(path)?;
+            std::io::copy(&mut file, &mut file_writer)?;
+            file_writer.finish()?;
         } else if !name.as_os_str().is_empty() {
             // Only if not root! Avoids path spec / warning
             // and mapname conversion failed error on unzip
@@ -101,7 +89,7 @@ where
         }
     }
     zip.finish()?;
-    Result::Ok(())
+    Ok(())
 }
 
 fn doit(

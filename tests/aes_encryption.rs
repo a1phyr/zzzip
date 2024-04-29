@@ -11,17 +11,15 @@ const PASSWORD: &[u8] = b"helloworld";
 fn aes256_encrypted_uncompressed_file() {
     let mut v = Vec::new();
     v.extend_from_slice(include_bytes!("data/aes_archive.zip"));
-    let mut archive = ZipArchive::new(io::Cursor::new(v)).expect("couldn't open test zip file");
+    let mut archive = ZipArchive::new(io::Cursor::new(v)).unwrap();
 
-    let mut file = archive
-        .by_name_decrypt("secret_data_256_uncompressed", PASSWORD)
-        .expect("couldn't find file in archive")
-        .expect("invalid password");
+    let file = archive.by_name("secret_data_256_uncompressed").unwrap();
     assert_eq!("secret_data_256_uncompressed", file.name());
 
+    let mut file = file.decrypt(PASSWORD).unwrap();
+
     let mut content = String::new();
-    file.read_to_string(&mut content)
-        .expect("couldn't read encrypted file");
+    file.read_to_string(&mut content).unwrap();
     assert_eq!(SECRET_CONTENT, content);
 }
 
@@ -29,17 +27,15 @@ fn aes256_encrypted_uncompressed_file() {
 fn aes256_encrypted_file() {
     let mut v = Vec::new();
     v.extend_from_slice(include_bytes!("data/aes_archive.zip"));
-    let mut archive = ZipArchive::new(io::Cursor::new(v)).expect("couldn't open test zip file");
+    let mut archive = ZipArchive::new(io::Cursor::new(v)).unwrap();
 
-    let mut file = archive
-        .by_name_decrypt("secret_data_256", PASSWORD)
-        .expect("couldn't find file in archive")
-        .expect("invalid password");
+    let file = archive.by_name("secret_data_256").unwrap();
     assert_eq!("secret_data_256", file.name());
 
+    let mut file = file.decrypt(PASSWORD).unwrap();
+
     let mut content = String::new();
-    file.read_to_string(&mut content)
-        .expect("couldn't read encrypted and compressed file");
+    file.read_to_string(&mut content).unwrap();
     assert_eq!(SECRET_CONTENT, content);
 }
 
@@ -47,17 +43,16 @@ fn aes256_encrypted_file() {
 fn aes192_encrypted_file() {
     let mut v = Vec::new();
     v.extend_from_slice(include_bytes!("data/aes_archive.zip"));
-    let mut archive = ZipArchive::new(io::Cursor::new(v)).expect("couldn't open test zip file");
+    let mut archive = ZipArchive::new(io::Cursor::new(v)).unwrap();
 
-    let mut file = archive
-        .by_name_decrypt("secret_data_192", PASSWORD)
-        .expect("couldn't find file in archive")
-        .expect("invalid password");
+    let file = archive.by_name("secret_data_192").unwrap();
+
     assert_eq!("secret_data_192", file.name());
 
+    let mut file = file.decrypt(PASSWORD).unwrap();
+
     let mut content = String::new();
-    file.read_to_string(&mut content)
-        .expect("couldn't read encrypted file");
+    file.read_to_string(&mut content).unwrap();
     assert_eq!(SECRET_CONTENT, content);
 }
 
@@ -65,16 +60,14 @@ fn aes192_encrypted_file() {
 fn aes128_encrypted_file() {
     let mut v = Vec::new();
     v.extend_from_slice(include_bytes!("data/aes_archive.zip"));
-    let mut archive = ZipArchive::new(io::Cursor::new(v)).expect("couldn't open test zip file");
+    let mut archive = ZipArchive::new(io::Cursor::new(v)).unwrap();
 
-    let mut file = archive
-        .by_name_decrypt("secret_data_128", PASSWORD)
-        .expect("couldn't find file in archive")
-        .expect("invalid password");
+    let file = archive.by_name("secret_data_128").unwrap();
     assert_eq!("secret_data_128", file.name());
 
+    let mut file = file.decrypt(PASSWORD).unwrap();
+
     let mut content = String::new();
-    file.read_to_string(&mut content)
-        .expect("couldn't read encrypted file");
+    file.read_to_string(&mut content).unwrap();
     assert_eq!(SECRET_CONTENT, content);
 }

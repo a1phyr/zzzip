@@ -22,7 +22,7 @@
 //!
 //!
 
-#![warn(missing_docs)]
+// #![warn(missing_docs)]
 
 pub use crate::compression::{CompressionMethod, SUPPORTED_COMPRESSION_METHODS};
 pub use crate::read::ZipArchive;
@@ -40,6 +40,7 @@ pub mod read;
 pub mod result;
 mod spec;
 mod types;
+mod utils;
 pub mod write;
 mod zipcrypto;
 

@@ -1,50 +1,44 @@
 //! Types that specify what is contained in a ZIP.
 use std::path;
 
-#[cfg(not(any(
-    all(target_arch = "arm", target_pointer_width = "32"),
-    target_arch = "mips",
-    target_arch = "powerpc"
-)))]
+#[cfg(target_has_atomic = "64")]
 use std::sync::atomic;
+
 #[cfg(not(feature = "time"))]
 use std::time::SystemTime;
+
 #[cfg(doc)]
-use {crate::read::ZipFile, crate::write::FileOptions};
+use crate::{read::ZipFile, write::FileOptions};
 
 mod ffi {
     pub const S_IFDIR: u32 = 0o0040000;
     pub const S_IFREG: u32 = 0o0100000;
 }
 
-#[cfg(any(
-    all(target_arch = "arm", target_pointer_width = "32"),
-    target_arch = "mips",
-    target_arch = "powerpc"
-))]
+#[cfg(not(target_has_atomic = "64"))]
 mod atomic {
-    use crossbeam_utils::sync::ShardedLock;
     pub use std::sync::atomic::Ordering;
+    use std::sync::Mutex;
 
     #[derive(Debug, Default)]
     pub struct AtomicU64 {
-        value: ShardedLock<u64>,
+        value: Mutex<u64>,
     }
 
     impl AtomicU64 {
         pub fn new(v: u64) -> Self {
             Self {
-                value: ShardedLock::new(v),
+                value: Mutex::new(v),
             }
         }
         pub fn get_mut(&mut self) -> &mut u64 {
             self.value.get_mut().unwrap()
         }
         pub fn load(&self, _: Ordering) -> u64 {
-            *self.value.read().unwrap()
+            *self.value.lock().unwrap()
         }
         pub fn store(&self, value: u64, _: Ordering) {
-            *self.value.write().unwrap() = value;
+            *self.value.lock().unwrap() = value;
         }
     }
 }
@@ -307,7 +301,7 @@ impl Clone for AtomicU64 {
 
 /// Structure representing a ZIP file.
 #[derive(Debug, Clone)]
-pub struct ZipFileData {
+pub struct RawZipFileMetadata {
     /// Compatibility of the file attribute information
     pub system: System,
     /// Specification version
@@ -319,7 +313,7 @@ pub struct ZipFileData {
     /// Compression method used to store the file
     pub compression_method: crate::compression::CompressionMethod,
     /// Compression level to store the file
-    pub compression_level: Option<i32>,
+    pub compression_level: Option<u32>,
     /// Last modified time. This will only have a 2 second precision.
     pub last_modified_time: DateTime,
     /// CRC32 checksum
@@ -352,7 +346,7 @@ pub struct ZipFileData {
     pub aes_mode: Option<(AesMode, AesVendorVersion)>,
 }
 
-impl ZipFileData {
+impl RawZipFileMetadata {
     pub fn file_name_sanitized(&self) -> ::std::path::PathBuf {
         let no_null_filename = match self.file_name.find('\0') {
             Some(index) => &self.file_name[0..index],
@@ -432,7 +426,7 @@ impl ZipFileData {
         // higher versions matched first
         match (self.zip64_extension(), self.compression_method) {
             #[cfg(feature = "bzip2")]
-            (_, crate::compression::CompressionMethod::Bzip2) => 46,
+            (_, crate::compression::CompressionMethod::BZIP2) => 46,
             (true, _) => 45,
             _ => 20,
         }
@@ -487,12 +481,12 @@ mod test {
     fn sanitize() {
         use super::*;
         let file_name = "/path/../../../../etc/./passwd\0/etc/shadow".to_string();
-        let data = ZipFileData {
+        let data = RawZipFileMetadata {
             system: System::Dos,
             version_made_by: 0,
             encrypted: false,
             using_data_descriptor: false,
-            compression_method: crate::compression::CompressionMethod::Stored,
+            compression_method: crate::compression::CompressionMethod::STORE,
             compression_level: None,
             last_modified_time: DateTime::default(),
             crc32: 0,

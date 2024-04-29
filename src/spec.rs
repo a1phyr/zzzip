@@ -1,5 +1,5 @@
 use crate::result::{ZipError, ZipResult};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use crate::utils::{ReadLE, WriteLE};
 use std::io;
 use std::io::prelude::*;
 
@@ -36,17 +36,17 @@ impl CentralDirectoryEnd {
     }
 
     pub fn parse<T: Read>(reader: &mut T) -> ZipResult<CentralDirectoryEnd> {
-        let magic = reader.read_u32::<LittleEndian>()?;
+        let magic = reader.read_u32()?;
         if magic != CENTRAL_DIRECTORY_END_SIGNATURE {
             return Err(ZipError::InvalidArchive("Invalid digital signature header"));
         }
-        let disk_number = reader.read_u16::<LittleEndian>()?;
-        let disk_with_central_directory = reader.read_u16::<LittleEndian>()?;
-        let number_of_files_on_this_disk = reader.read_u16::<LittleEndian>()?;
-        let number_of_files = reader.read_u16::<LittleEndian>()?;
-        let central_directory_size = reader.read_u32::<LittleEndian>()?;
-        let central_directory_offset = reader.read_u32::<LittleEndian>()?;
-        let zip_file_comment_length = reader.read_u16::<LittleEndian>()? as usize;
+        let disk_number = reader.read_u16()?;
+        let disk_with_central_directory = reader.read_u16()?;
+        let number_of_files_on_this_disk = reader.read_u16()?;
+        let number_of_files = reader.read_u16()?;
+        let central_directory_size = reader.read_u32()?;
+        let central_directory_offset = reader.read_u32()?;
+        let zip_file_comment_length = reader.read_u16()? as usize;
         let mut zip_file_comment = vec![0; zip_file_comment_length];
         reader.read_exact(&mut zip_file_comment)?;
 
@@ -77,7 +77,7 @@ impl CentralDirectoryEnd {
         let mut pos = file_length - HEADER_SIZE;
         while pos >= search_upper_bound {
             reader.seek(io::SeekFrom::Start(pos))?;
-            if reader.read_u32::<LittleEndian>()? == CENTRAL_DIRECTORY_END_SIGNATURE {
+            if reader.read_u32()? == CENTRAL_DIRECTORY_END_SIGNATURE {
                 reader.seek(io::SeekFrom::Current(
                     BYTES_BETWEEN_MAGIC_AND_COMMENT_SIZE as i64,
                 ))?;
@@ -94,15 +94,15 @@ impl CentralDirectoryEnd {
         ))
     }
 
-    pub fn write<T: Write>(&self, writer: &mut T) -> ZipResult<()> {
-        writer.write_u32::<LittleEndian>(CENTRAL_DIRECTORY_END_SIGNATURE)?;
-        writer.write_u16::<LittleEndian>(self.disk_number)?;
-        writer.write_u16::<LittleEndian>(self.disk_with_central_directory)?;
-        writer.write_u16::<LittleEndian>(self.number_of_files_on_this_disk)?;
-        writer.write_u16::<LittleEndian>(self.number_of_files)?;
-        writer.write_u32::<LittleEndian>(self.central_directory_size)?;
-        writer.write_u32::<LittleEndian>(self.central_directory_offset)?;
-        writer.write_u16::<LittleEndian>(self.zip_file_comment.len() as u16)?;
+    pub fn write_to<T: Write>(&self, writer: &mut T) -> ZipResult<()> {
+        writer.write_u32(CENTRAL_DIRECTORY_END_SIGNATURE)?;
+        writer.write_u16(self.disk_number)?;
+        writer.write_u16(self.disk_with_central_directory)?;
+        writer.write_u16(self.number_of_files_on_this_disk)?;
+        writer.write_u16(self.number_of_files)?;
+        writer.write_u32(self.central_directory_size)?;
+        writer.write_u32(self.central_directory_offset)?;
+        writer.write_u16(self.zip_file_comment.len() as u16)?;
         writer.write_all(&self.zip_file_comment)?;
         Ok(())
     }
@@ -116,15 +116,15 @@ pub struct Zip64CentralDirectoryEndLocator {
 
 impl Zip64CentralDirectoryEndLocator {
     pub fn parse<T: Read>(reader: &mut T) -> ZipResult<Zip64CentralDirectoryEndLocator> {
-        let magic = reader.read_u32::<LittleEndian>()?;
+        let magic = reader.read_u32()?;
         if magic != ZIP64_CENTRAL_DIRECTORY_END_LOCATOR_SIGNATURE {
             return Err(ZipError::InvalidArchive(
                 "Invalid zip64 locator digital signature header",
             ));
         }
-        let disk_with_central_directory = reader.read_u32::<LittleEndian>()?;
-        let end_of_central_directory_offset = reader.read_u64::<LittleEndian>()?;
-        let number_of_disks = reader.read_u32::<LittleEndian>()?;
+        let disk_with_central_directory = reader.read_u32()?;
+        let end_of_central_directory_offset = reader.read_u64()?;
+        let number_of_disks = reader.read_u32()?;
 
         Ok(Zip64CentralDirectoryEndLocator {
             disk_with_central_directory,
@@ -134,10 +134,10 @@ impl Zip64CentralDirectoryEndLocator {
     }
 
     pub fn write<T: Write>(&self, writer: &mut T) -> ZipResult<()> {
-        writer.write_u32::<LittleEndian>(ZIP64_CENTRAL_DIRECTORY_END_LOCATOR_SIGNATURE)?;
-        writer.write_u32::<LittleEndian>(self.disk_with_central_directory)?;
-        writer.write_u64::<LittleEndian>(self.end_of_central_directory_offset)?;
-        writer.write_u32::<LittleEndian>(self.number_of_disks)?;
+        writer.write_u32(ZIP64_CENTRAL_DIRECTORY_END_LOCATOR_SIGNATURE)?;
+        writer.write_u32(self.disk_with_central_directory)?;
+        writer.write_u64(self.end_of_central_directory_offset)?;
+        writer.write_u32(self.number_of_disks)?;
         Ok(())
     }
 }
@@ -165,20 +165,20 @@ impl Zip64CentralDirectoryEnd {
         while pos <= search_upper_bound {
             reader.seek(io::SeekFrom::Start(pos))?;
 
-            if reader.read_u32::<LittleEndian>()? == ZIP64_CENTRAL_DIRECTORY_END_SIGNATURE {
+            if reader.read_u32()? == ZIP64_CENTRAL_DIRECTORY_END_SIGNATURE {
                 let archive_offset = pos - nominal_offset;
 
-                let _record_size = reader.read_u64::<LittleEndian>()?;
+                let _record_size = reader.read_u64()?;
                 // We would use this value if we did anything with the "zip64 extensible data sector".
 
-                let version_made_by = reader.read_u16::<LittleEndian>()?;
-                let version_needed_to_extract = reader.read_u16::<LittleEndian>()?;
-                let disk_number = reader.read_u32::<LittleEndian>()?;
-                let disk_with_central_directory = reader.read_u32::<LittleEndian>()?;
-                let number_of_files_on_this_disk = reader.read_u64::<LittleEndian>()?;
-                let number_of_files = reader.read_u64::<LittleEndian>()?;
-                let central_directory_size = reader.read_u64::<LittleEndian>()?;
-                let central_directory_offset = reader.read_u64::<LittleEndian>()?;
+                let version_made_by = reader.read_u16()?;
+                let version_needed_to_extract = reader.read_u16()?;
+                let disk_number = reader.read_u32()?;
+                let disk_with_central_directory = reader.read_u32()?;
+                let number_of_files_on_this_disk = reader.read_u64()?;
+                let number_of_files = reader.read_u64()?;
+                let central_directory_size = reader.read_u64()?;
+                let central_directory_offset = reader.read_u64()?;
 
                 return Ok((
                     Zip64CentralDirectoryEnd {
@@ -204,16 +204,16 @@ impl Zip64CentralDirectoryEnd {
     }
 
     pub fn write<T: Write>(&self, writer: &mut T) -> ZipResult<()> {
-        writer.write_u32::<LittleEndian>(ZIP64_CENTRAL_DIRECTORY_END_SIGNATURE)?;
-        writer.write_u64::<LittleEndian>(44)?; // record size
-        writer.write_u16::<LittleEndian>(self.version_made_by)?;
-        writer.write_u16::<LittleEndian>(self.version_needed_to_extract)?;
-        writer.write_u32::<LittleEndian>(self.disk_number)?;
-        writer.write_u32::<LittleEndian>(self.disk_with_central_directory)?;
-        writer.write_u64::<LittleEndian>(self.number_of_files_on_this_disk)?;
-        writer.write_u64::<LittleEndian>(self.number_of_files)?;
-        writer.write_u64::<LittleEndian>(self.central_directory_size)?;
-        writer.write_u64::<LittleEndian>(self.central_directory_offset)?;
+        writer.write_u32(ZIP64_CENTRAL_DIRECTORY_END_SIGNATURE)?;
+        writer.write_u64(44)?; // record size
+        writer.write_u16(self.version_made_by)?;
+        writer.write_u16(self.version_needed_to_extract)?;
+        writer.write_u32(self.disk_number)?;
+        writer.write_u32(self.disk_with_central_directory)?;
+        writer.write_u64(self.number_of_files_on_this_disk)?;
+        writer.write_u64(self.number_of_files)?;
+        writer.write_u64(self.central_directory_size)?;
+        writer.write_u64(self.central_directory_offset)?;
         Ok(())
     }
 }

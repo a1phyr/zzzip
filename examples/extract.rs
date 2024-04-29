@@ -1,23 +1,22 @@
 use std::fs;
 use std::io;
+use std::process::ExitCode;
 
-fn main() {
-    std::process::exit(real_main());
-}
-
-fn real_main() -> i32 {
+fn main() -> ExitCode {
     let args: Vec<_> = std::env::args().collect();
     if args.len() < 2 {
         println!("Usage: {} <filename>", args[0]);
-        return 1;
+        return ExitCode::FAILURE;
     }
     let fname = std::path::Path::new(&*args[1]);
-    let file = fs::File::open(fname).unwrap();
+    let file = io::BufReader::new(fs::File::open(fname).unwrap());
 
     let mut archive = zip::ZipArchive::new(file).unwrap();
 
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i).unwrap();
+        let file = archive.by_index(i).unwrap();
+        let metadata = file.metadata();
+
         let outpath = match file.enclosed_name() {
             Some(path) => path.to_owned(),
             None => continue,
@@ -46,7 +45,7 @@ fn real_main() -> i32 {
                 }
             }
             let mut outfile = fs::File::create(&outpath).unwrap();
-            io::copy(&mut file, &mut outfile).unwrap();
+            io::copy(&mut file.reader().unwrap(), &mut outfile).unwrap();
         }
 
         // Get and Set permissions
@@ -54,11 +53,11 @@ fn real_main() -> i32 {
         {
             use std::os::unix::fs::PermissionsExt;
 
-            if let Some(mode) = file.unix_mode() {
+            if let Some(mode) = metadata.unix_mode() {
                 fs::set_permissions(&outpath, fs::Permissions::from_mode(mode)).unwrap();
             }
         }
     }
 
-    0
+    ExitCode::FAILURE
 }

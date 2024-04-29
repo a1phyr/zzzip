@@ -1,15 +1,11 @@
-use std::io::prelude::*;
+use std::{io::prelude::*, process::ExitCode};
 use zip::write::FileOptions;
 
-fn main() {
-    std::process::exit(real_main());
-}
-
-fn real_main() -> i32 {
+fn main() -> ExitCode {
     let args: Vec<_> = std::env::args().collect();
     if args.len() < 2 {
         println!("Usage: {} <filename>", args[0]);
-        return 1;
+        return ExitCode::FAILURE;
     }
 
     let filename = &*args[1];
@@ -18,7 +14,7 @@ fn real_main() -> i32 {
         Err(e) => println!("Error: {e:?}"),
     }
 
-    0
+    ExitCode::SUCCESS
 }
 
 fn doit(filename: &str) -> zip::result::ZipResult<()> {
@@ -29,14 +25,19 @@ fn doit(filename: &str) -> zip::result::ZipResult<()> {
 
     zip.add_directory("test/", Default::default())?;
 
-    let options = FileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored)
-        .unix_permissions(0o755);
-    zip.start_file("test/☃.txt", options)?;
-    zip.write_all(b"Hello, World!\n")?;
+    let options = FileOptions {
+        compression_method: zip::CompressionMethod::STORE,
+        permissions: Some(0o755),
+        ..Default::default()
+    };
 
-    zip.start_file("test/lorem_ipsum.txt", Default::default())?;
-    zip.write_all(LOREM_IPSUM)?;
+    let mut f = zip.start_file("test/☃.txt", options)?;
+    f.write_all(b"Hello, World!\n")?;
+    f.finish()?;
+
+    let mut f = zip.start_file("test/lorem_ipsum.txt", Default::default())?;
+    f.write_all(LOREM_IPSUM)?;
+    f.finish()?;
 
     zip.finish()?;
     Ok(())
