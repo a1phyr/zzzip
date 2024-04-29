@@ -1,15 +1,12 @@
 use std::fs;
 use std::io::BufReader;
+use std::process::ExitCode;
 
-fn main() {
-    std::process::exit(real_main());
-}
-
-fn real_main() -> i32 {
+fn main() -> ExitCode {
     let args: Vec<_> = std::env::args().collect();
     if args.len() < 2 {
         println!("Usage: {} <filename>", args[0]);
-        return 1;
+        return ExitCode::FAILURE;
     }
     let fname = std::path::Path::new(&*args[1]);
     let file = fs::File::open(fname).unwrap();
@@ -50,5 +47,5 @@ fn real_main() -> i32 {
         }
     }
 
-    0
+    ExitCode::SUCCESS
 }

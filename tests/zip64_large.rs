@@ -190,11 +190,11 @@ impl Read for Zip64File {
 #[test]
 fn zip64_large() {
     let zipfile = Zip64File::new();
-    let mut archive = zip::ZipArchive::new(zipfile).unwrap();
+    let mut archive = zip::ZipArchive::new(io::BufReader::new(zipfile)).unwrap();
     let mut buf = [0u8; 32];
 
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i).unwrap();
+        let file = archive.by_index(i).unwrap();
         let outpath = file.enclosed_name().unwrap();
         println!(
             "Entry {} has name \"{}\" ({} bytes)",
@@ -203,6 +203,7 @@ fn zip64_large() {
             file.size()
         );
 
+        let mut file = file.reader().unwrap();
         match file.read_exact(&mut buf) {
             Ok(()) => println!("The first {} bytes are: {:?}", buf.len(), buf),
             Err(e) => println!("Could not read the file: {e:?}"),

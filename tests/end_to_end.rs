@@ -1,6 +1,6 @@
 use byteorder::{LittleEndian, WriteBytesExt};
 use std::collections::HashSet;
-use std::io::prelude::*;
+use std::io::{self, prelude::*};
 use std::io::{Cursor, Seek};
 use std::iter::FromIterator;
 use zip::write::FileOptions;
@@ -50,6 +50,8 @@ fn copy() {
 
                 zip.raw_copy_file_rename(file, COPY_ENTRY_NAME)
                     .expect("Couldn't copy and rename file");
+
+                zip.finish().unwrap();
             }
         }
 
@@ -70,12 +72,17 @@ fn append() {
 
         {
             let mut zip = zip::ZipWriter::new_append(&mut file).unwrap();
-            zip.start_file(
-                COPY_ENTRY_NAME,
-                FileOptions::default().compression_method(method),
-            )
-            .unwrap();
-            zip.write_all(LOREM_IPSUM).unwrap();
+            let mut f = zip
+                .start_file(
+                    COPY_ENTRY_NAME,
+                    FileOptions {
+                        compression_method: method,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            f.write_all(LOREM_IPSUM).unwrap();
+            f.finish().unwrap();
             zip.finish().unwrap();
         }
 
@@ -94,29 +101,36 @@ fn write_test_archive(
 
     zip.add_directory("test/", Default::default())?;
 
-    let options = FileOptions::default()
-        .compression_method(method)
-        .unix_permissions(0o755);
+    let options = FileOptions {
+        compression_method: method,
+        permissions: Some(0o755),
+        ..Default::default()
+    };
 
-    zip.start_file("test/☃.txt", options)?;
-    zip.write_all(b"Hello, World!\n")?;
+    let mut f = zip.start_file("test/☃.txt", options)?;
+    f.write_all(b"Hello, World!\n")?;
+    f.finish()?;
 
-    zip.start_file_with_extra_data("test_with_extra_data/🐢.txt", options)?;
-    zip.write_u16::<LittleEndian>(0xbeef)?;
-    zip.write_u16::<LittleEndian>(EXTRA_DATA.len() as u16)?;
-    zip.write_all(EXTRA_DATA)?;
-    zip.end_extra_data()?;
-    zip.write_all(b"Hello, World! Again.\n")?;
+    let mut ex = zip.start_file_with_extra_data("test_with_extra_data/🐢.txt", options)?;
+    ex.write_u16::<LittleEndian>(0xbeef)?;
+    ex.write_u16::<LittleEndian>(EXTRA_DATA.len() as u16)?;
+    ex.write_all(EXTRA_DATA)?;
+    let mut f = ex.finish()?;
+    f.write_all(b"Hello, World! Again.\n")?;
+    f.finish()?;
 
-    zip.start_file(ENTRY_NAME, options)?;
-    zip.write_all(LOREM_IPSUM)?;
+    let mut f = zip.start_file(ENTRY_NAME, options)?;
+    f.write_all(LOREM_IPSUM)?;
+    f.finish()?;
 
     zip.finish()?;
     Ok(())
 }
 
 // Load an archive from buffer and check for test data.
-fn check_test_archive<R: Read + Seek>(zip_file: R) -> zip::result::ZipResult<zip::ZipArchive<R>> {
+fn check_test_archive<R: BufRead + Seek>(
+    zip_file: R,
+) -> zip::result::ZipResult<zip::ZipArchive<R>> {
     let mut archive = zip::ZipArchive::new(zip_file).unwrap();
 
     // Check archive contains expected file names.
@@ -146,16 +160,11 @@ fn check_test_archive<R: Read + Seek>(zip_file: R) -> zip::result::ZipResult<zip
 }
 
 // Read a file in the archive as a string.
-fn read_archive_file<R: Read + Seek>(
+fn read_archive_file<R: BufRead + Seek>(
     archive: &mut zip::ZipArchive<R>,
     name: &str,
-) -> zip::result::ZipResult<String> {
-    let mut file = archive.by_name(name)?;
-
-    let mut contents = String::new();
-    file.read_to_string(&mut contents).unwrap();
-
-    Ok(contents)
+) -> io::Result<String> {
+    archive.by_name(name)?.read_to_string()
 }
 
 // Check a file in the archive contains expected data and properties.
@@ -170,7 +179,7 @@ fn check_archive_file(
     if let Some(expected_method) = expected_method {
         // Check the file's compression method.
         let file = archive.by_name(name).unwrap();
-        let real_method = file.compression();
+        let real_method = file.compression_method();
 
         assert_eq!(
             expected_method, real_method,
@@ -182,7 +191,7 @@ fn check_archive_file(
 }
 
 // Check a file in the archive contains the given data.
-fn check_archive_file_contents<R: Read + Seek>(
+fn check_archive_file_contents<R: BufRead + Seek>(
     archive: &mut zip::ZipArchive<R>,
     name: &str,
     expected: &[u8],

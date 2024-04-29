@@ -5,30 +5,37 @@ use std::io::prelude::*;
 
 use crc32fast::Hasher;
 
+#[cold]
+fn invalid_checksum() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, "invalid checksum")
+}
+
 /// Reader that validates the CRC32 when it reaches the EOF.
 pub struct Crc32Reader<R> {
     inner: R,
     hasher: Hasher,
     check: u32,
-    /// Signals if `inner` stores aes encrypted data.
-    /// AE-2 encrypted data doesn't use crc and sets the value to 0.
-    ae2_encrypted: bool,
+    enabled: bool,
 }
 
 impl<R> Crc32Reader<R> {
     /// Get a new Crc32Reader which checks the inner reader against checksum.
     /// The check is disabled if `ae2_encrypted == true`.
-    pub(crate) fn new(inner: R, checksum: u32, ae2_encrypted: bool) -> Crc32Reader<R> {
+    pub(crate) fn new(inner: R, checksum: u32, enabled: bool) -> Crc32Reader<R> {
         Crc32Reader {
             inner,
             hasher: Hasher::new(),
             check: checksum,
-            ae2_encrypted,
+            enabled,
         }
     }
 
     fn check_matches(&self) -> bool {
         self.check == self.hasher.clone().finalize()
+    }
+
+    pub fn get_mut(&mut self) -> &mut R {
+        &mut self.inner
     }
 
     pub fn into_inner(self) -> R {
@@ -38,17 +45,80 @@ impl<R> Crc32Reader<R> {
 
 impl<R: Read> Read for Crc32Reader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let invalid_check = !buf.is_empty() && !self.check_matches() && !self.ae2_encrypted;
+        let n = self.inner.read(buf)?;
 
-        let count = match self.inner.read(buf) {
-            Ok(0) if invalid_check => {
-                return Err(io::Error::new(io::ErrorKind::Other, "Invalid checksum"))
+        if self.enabled {
+            self.hasher.update(&buf[..n]);
+            if n == 0 && !buf.is_empty() && !self.check_matches() {
+                return Err(invalid_checksum());
             }
-            Ok(n) => n,
-            Err(e) => return Err(e),
         };
-        self.hasher.update(&buf[0..count]);
-        Ok(count)
+
+        Ok(n)
+    }
+
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
+        let start = buf.len();
+
+        let n = self.inner.read_to_end(buf)?;
+
+        if self.enabled {
+            self.hasher.update(&buf[start..]);
+            if !self.check_matches() {
+                return Err(invalid_checksum());
+            }
+        }
+
+        Ok(n)
+    }
+
+    fn read_to_string(&mut self, buf: &mut String) -> io::Result<usize> {
+        let start = buf.len();
+
+        let n = self.inner.read_to_string(buf)?;
+
+        if self.enabled {
+            self.hasher.update(&buf.as_bytes()[start..]);
+            if !self.check_matches() {
+                return Err(invalid_checksum());
+            }
+        }
+
+        Ok(n)
+    }
+}
+
+pub struct Crc32Writer<W> {
+    inner: W,
+    hasher: Hasher,
+}
+
+impl<W> Crc32Writer<W> {
+    pub fn new(inner: W) -> Self {
+        Self {
+            inner,
+            hasher: Hasher::new(),
+        }
+    }
+
+    pub fn finalize(&self) -> u32 {
+        self.hasher.clone().finalize()
+    }
+
+    pub fn into_inner(self) -> W {
+        self.inner
+    }
+}
+
+impl<W: io::Write> io::Write for Crc32Writer<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.hasher.update(&buf[..n]);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
     }
 }
 
@@ -62,15 +132,15 @@ mod test {
         let data: &[u8] = b"";
         let mut buf = [0; 1];
 
-        let mut reader = Crc32Reader::new(data, 0, false);
+        let mut reader = Crc32Reader::new(data, 0, true);
         assert_eq!(reader.read(&mut buf).unwrap(), 0);
 
-        let mut reader = Crc32Reader::new(data, 1, false);
+        let mut reader = Crc32Reader::new(data, 1, true);
         assert!(reader
             .read(&mut buf)
             .unwrap_err()
             .to_string()
-            .contains("Invalid checksum"));
+            .contains("invalid checksum"));
     }
 
     #[test]
@@ -78,7 +148,7 @@ mod test {
         let data: &[u8] = b"1234";
         let mut buf = [0; 1];
 
-        let mut reader = Crc32Reader::new(data, 0x9be3e0a3, false);
+        let mut reader = Crc32Reader::new(data, 0x9be3e0a3, true);
         assert_eq!(reader.read(&mut buf).unwrap(), 1);
         assert_eq!(reader.read(&mut buf).unwrap(), 1);
         assert_eq!(reader.read(&mut buf).unwrap(), 1);
@@ -93,7 +163,7 @@ mod test {
         let data: &[u8] = b"1234";
         let mut buf = [0; 5];
 
-        let mut reader = Crc32Reader::new(data, 0x9be3e0a3, false);
+        let mut reader = Crc32Reader::new(data, 0x9be3e0a3, true);
         assert_eq!(reader.read(&mut buf[..0]).unwrap(), 0);
         assert_eq!(reader.read(&mut buf).unwrap(), 4);
     }

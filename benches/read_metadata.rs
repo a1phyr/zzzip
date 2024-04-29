@@ -11,15 +11,18 @@ const FILE_SIZE: usize = 1024;
 fn generate_random_archive(count_files: usize, file_size: usize) -> Vec<u8> {
     let data = Vec::new();
     let mut writer = ZipWriter::new(Cursor::new(data));
-    let options =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let options = zip::write::FileOptions {
+        compression_method: zip::CompressionMethod::STORE,
+        ..Default::default()
+    };
 
     let bytes = vec![0u8; file_size];
 
     for i in 0..count_files {
         let name = format!("file_deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef_{i}.dat");
-        writer.start_file(name, options).unwrap();
-        writer.write_all(&bytes).unwrap();
+        let mut file = writer.start_file(name, options).unwrap();
+        file.write_all(&bytes).unwrap();
+        file.finish().unwrap();
     }
 
     writer.finish().unwrap().into_inner()

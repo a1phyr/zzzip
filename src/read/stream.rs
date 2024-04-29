@@ -1,13 +1,13 @@
 use std::fs;
-use std::io::{self, Read};
+use std::io;
 use std::path::Path;
 
 use super::{
-    central_header_to_zip_file_inner, read_zipfile_from_stream, spec, ZipError, ZipFile,
-    ZipFileData, ZipResult,
+    central_header_to_zip_file_inner, read_zipfile_from_stream, spec, RawZipFileMetadata, ZipError,
+    ZipResult,
 };
-
-use byteorder::{LittleEndian, ReadBytesExt};
+use crate::read::StreamZipFile;
+use crate::utils::ReadLE;
 
 /// Stream decoder for zip.
 #[derive(Debug)]
@@ -20,7 +20,7 @@ impl<R> ZipStreamReader<R> {
     }
 }
 
-impl<R: Read> ZipStreamReader<R> {
+impl<R: io::BufRead> ZipStreamReader<R> {
     fn parse_central_directory(&mut self) -> ZipResult<Option<ZipStreamFileMetadata>> {
         // Give archive_offset and central_header_start dummy value 0, since
         // they are not used in the output.
@@ -28,7 +28,7 @@ impl<R: Read> ZipStreamReader<R> {
         let central_header_start = 0;
 
         // Parse central header
-        let signature = self.0.read_u32::<LittleEndian>()?;
+        let signature = self.0.read_u32()?;
         if signature != spec::CENTRAL_DIRECTORY_HEADER_SIGNATURE {
             Ok(None)
         } else {
@@ -60,14 +60,15 @@ impl<R: Read> ZipStreamReader<R> {
     pub fn extract<P: AsRef<Path>>(self, directory: P) -> ZipResult<()> {
         struct Extractor<'a>(&'a Path);
         impl ZipStreamVisitor for Extractor<'_> {
-            fn visit_file(&mut self, file: &mut ZipFile<'_>) -> ZipResult<()> {
+            fn visit_file(&mut self, file: &mut StreamZipFile<'_>) -> ZipResult<()> {
                 let filepath = file
+                    .data()
                     .enclosed_name()
                     .ok_or(ZipError::InvalidArchive("Invalid file path"))?;
 
                 let outpath = self.0.join(filepath);
 
-                if file.name().ends_with('/') {
+                if file.data().name().ends_with('/') {
                     fs::create_dir_all(&outpath)?;
                 } else {
                     if let Some(p) = outpath.parent() {
@@ -114,7 +115,7 @@ pub trait ZipStreamVisitor {
     ///     - `comment`: set to an empty string
     ///     - `data_start`: set to 0
     ///     - `external_attributes`: `unix_mode()`: will return None
-    fn visit_file(&mut self, file: &mut ZipFile<'_>) -> ZipResult<()>;
+    fn visit_file(&mut self, file: &mut StreamZipFile<'_>) -> ZipResult<()>;
 
     /// This function is guranteed to be called after all `visit_file`s.
     ///
@@ -124,7 +125,7 @@ pub trait ZipStreamVisitor {
 
 /// Additional metadata for the file.
 #[derive(Debug)]
-pub struct ZipStreamFileMetadata(ZipFileData);
+pub struct ZipStreamFileMetadata(RawZipFileMetadata);
 
 impl ZipStreamFileMetadata {
     /// Get the name of the file
@@ -184,8 +185,7 @@ impl ZipStreamFileMetadata {
     pub fn is_dir(&self) -> bool {
         self.name()
             .chars()
-            .rev()
-            .next()
+            .next_back()
             .map_or(false, |c| c == '/' || c == '\\')
     }
 
@@ -218,7 +218,7 @@ mod test {
 
     struct DummyVisitor;
     impl ZipStreamVisitor for DummyVisitor {
-        fn visit_file(&mut self, _file: &mut ZipFile<'_>) -> ZipResult<()> {
+        fn visit_file(&mut self, _file: &mut StreamZipFile<'_>) -> ZipResult<()> {
             Ok(())
         }
 
@@ -233,7 +233,7 @@ mod test {
     #[derive(Default, Debug, Eq, PartialEq)]
     struct CounterVisitor(u64, u64);
     impl ZipStreamVisitor for CounterVisitor {
-        fn visit_file(&mut self, _file: &mut ZipFile<'_>) -> ZipResult<()> {
+        fn visit_file(&mut self, _file: &mut StreamZipFile<'_>) -> ZipResult<()> {
             self.0 += 1;
             Ok(())
         }
@@ -276,7 +276,9 @@ mod test {
             filenames: BTreeSet<Box<str>>,
         }
         impl ZipStreamVisitor for V {
-            fn visit_file(&mut self, file: &mut ZipFile<'_>) -> ZipResult<()> {
+            fn visit_file(&mut self, file: &mut StreamZipFile<'_>) -> ZipResult<()> {
+                let file = file.data();
+
                 if file.is_file() {
                     self.filenames.insert(file.name().into());
                 }
@@ -313,7 +315,9 @@ mod test {
             filenames: BTreeSet<Box<str>>,
         }
         impl ZipStreamVisitor for V {
-            fn visit_file(&mut self, file: &mut ZipFile<'_>) -> ZipResult<()> {
+            fn visit_file(&mut self, file: &mut StreamZipFile<'_>) -> ZipResult<()> {
+                let file = file.data();
+
                 let full_name = file.enclosed_name().unwrap();
                 let file_name = full_name.file_name().unwrap().to_str().unwrap();
                 assert!(
